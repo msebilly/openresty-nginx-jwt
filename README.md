@@ -16,6 +16,10 @@ docker run --rm \
            -e JWT_SECRET=secret \
            -v `pwd`/nginx.conf:/nginx.conf \
            -v `pwd`/bearer.lua:/bearer.lua \
+           -v `pwd`/guard.lua:/guard.lua \
+           -v `pwd`/redjwt.lua:/redjwt.lua \
+           -v `pwd`/getjwt.lua:/getjwt.lua \
+           -v `pwd`/verify.lua:/verify.lua \
            -p 8080:8080 \
            ubergarm/openresty-nginx-jwt
 ```
@@ -28,11 +32,67 @@ http --print HBhb localhost:8080/secure/ "Authorization:Bearer eyJhbGciOiJIUzI1N
 http --print HBhb localhost:8080/secure/?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWV9.TJVA95OrM7E2cBab30RMHrHDcEfxjoYZgeFONFh7HgQ
 # token as cookie
 http --print HBhb localhost:8080/secure/ "Cookie:token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWV9.TJVA95OrM7E2cBab30RMHrHDcEfxjoYZgeFONFh7HgQ"
+
+http --print HBhb localhost:8080/verify
+
+http --print HBhb localhost:8080/sign
+
 ```
 
 
 ## Configure
 Edit `nginx.conf` to setup your custom location blocks.
+```nginx configuration
+location /secure/ {
+    access_by_lua_file /bearer.lua;
+
+    default_type text/plain;
+    echo "<p>i am protected by jwt<p>";
+}
+
+location = /verify {
+    content_by_lua '
+        local cjson = require "cjson"
+        local jwt = require "resty.jwt"
+
+        local auth_header = ngx.var.http_Authorization
+        if auth_header then
+            _, _, jwt_token = string.find(auth_header, "Bearer%s+(.+)")
+        end
+
+        local jwt_obj = jwt:verify(os.getenv("JWT_SECRET"), jwt_token)
+        -- ngx.say(jwt_obj["payload"].uuid)
+        ngx.say(cjson.encode(jwt_obj))
+    ';
+}
+
+location = /sign {
+    content_by_lua '
+        local cjson = require "cjson"
+        local jwt = require "resty.jwt"
+
+        local uid = ngx.req.get_headers()["X-Pro-Uuid"]
+
+        local jwt_token = jwt:sign(
+            os.getenv("JWT_SECRET"),
+            {
+                header={typ="JWT", alg="HS256"},
+                payload={uuid=uid}
+            }
+        )
+        ngx.say(jwt_token)
+    ';
+}
+
+location /secure_this {
+    access_by_lua '
+        local jwt = require "resty.jwt"
+        jwt.auth()
+    ';
+
+    proxy_pass http://my-backend.com$uri;
+}
+```
 
 Edit `bearer.lua` or create new `lua` scripts to meet your specific needs for each location block.
 
